@@ -1,0 +1,357 @@
+<!DOCTYPE HTML>
+<html>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+  <!-- pdf 여는 라이브러리 -->
+  <script src="https://mozilla.github.io/pdf.js/build/pdf.js"></script>
+  <!-- 엑셀로 저장하는 라이브러리 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.14.3/xlsx.full.min.js"></script>
+
+  <head>
+    <h2> pdf->excel 변환 </h2>
+  </head>
+
+  <body>
+
+    <input type="file" onchange="filepath(this); return false" accept=".pdf" multiple="multiple" /><br><br>
+    <button type="button" onclick="start()"> Convert </button><br><br>
+
+    <a>미리보기:</a>
+
+    <script>
+      var files = [];
+      var data = [];
+      var table;
+      var select;
+
+      function filepath(input) { // 파일 선택
+        files = []; // 전역 변수 초기화
+        for (i=0; i<input.files.length; i++) // 다중파일 배열로 만들기
+         files.push(input.files[i]);
+        console.log(files);
+      }
+      
+      async function start() { // 시작
+        data = []; // 전역 변수 초기화
+
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 
+        "https://mozilla.github.io/pdf.js/build/pdf.worker.js";
+
+        if(!files.length) { 
+          alert("파일을 선택하세요");
+          return;
+        }
+
+        for await (var f of files)
+          await parseFile(f);
+
+        display(); // 데이터 띄우기
+      }
+
+      async function parseFile(f) {
+        console.log(f);
+        var numOfPages;
+        var pages = [];
+        var path = URL.createObjectURL(f);
+
+        // 첫번째 페이지에서 텍스트 추출
+        await pdfjsLib.getDocument(path).promise.then(async function(pdf) {
+          numOfPages = pdf.numPages;
+
+          for(i=1; i<=pdf.numPages;i++) {
+            await pdf.getPage(i).then(async function(page) { 
+              var lines = await page.getTextContent().then(getTextArray); //getTextArray로 텍스트 추출 
+              if(!pages.length)
+                pages = lines.map((x) => x);
+              else
+                pages.push.apply(pages,lines);
+            });
+          }
+        });
+
+        console.log("텍스트 추출: ", pages);
+        pages = pages.map((x)=>x);
+        editText(pages); // 데이터 정리
+        console.log("데이터 정리 후: ", pages);
+        export_file(pages, f.name.substring(0,f.name.indexOf("."))); // csv 포멧으로 데이터 저장
+        data.push(pages);
+      }
+
+      function getTextArray(text) { // 텍스트 오브젝트에서 문자열 추출
+        var lines = [[]]; // 2D array of lines of text
+        text.items.forEach(function(item) {
+          if(!item.str) { // null이면 새로운 열 생성
+            lines.push([]);
+            return;
+          } else if(item.str === "|" || item.str === "| " || item.str.includes("+-"))
+            return;
+          else if(item.str.includes("|"))
+            item.str = item.str.replaceAll("|","");
+
+          // " "로 문자열 자르기
+          // 파일마다 원인 미상의 이유로 문자열 조각이 규칙적으로 나눠지지가 않음. 띄어쓰기 문자로 자르고 병합
+          var arr = item.str.split(" ");
+          while (arr.indexOf("") > -1) // 불필요한 "" 지우기
+            arr.splice(arr.indexOf(""), 1);
+
+          
+          lines[lines.length-1].push.apply(lines[lines.length-1], arr);
+        });
+        if(lines[lines.length-1][0] != "1")
+          lines.splice(0,2); // 첫번째 페이지 제외하고 마감선택집계 인쇄날짜 제거
+        lines.splice(lines.length-1,1);
+
+        return lines;
+      }
+
+      function editText(pages) { // 문자열의 배열에서 원하는 테이터만 추출 하고 보기 좋게 정리
+        var temp;
+
+        var indexes=[]; //충전기, 판매유형, 충전원 번호, 토탈게이지(적수) 중가량 섹션 위치 찾기
+        for (i=0; i<pages.length; i++) {
+          if(!pages[i].length)
+            indexes.push(i);
+        }
+
+        // 마감 선택 집계, 인쇄날짜, ...초부터, ...초까지
+        for(i=0; i<indexes[0]; i++) {
+          temp="";
+          pages[i].forEach(function(elem) {
+            temp+=elem+" ";
+          });
+          pages[i] = [temp];
+        }
+
+        console.log("빈 줄 위치: ", indexes);
+
+        // 단위 제외한 값만 남기기
+        for(i=indexes[0]; i<pages.length; i++) {
+          if(!pages[i].length)
+            continue;
+
+          temp = [];
+          pages[i].forEach(function(elem) {
+            if(elem === "원" || elem === "건")
+              return;
+
+            elem = elem.replaceAll("ℓ", "").replaceAll("Kg", "").replaceAll(",", "");
+
+            temp.push.apply(temp, elem.split(" ")); // " "로 문자열 나누기
+            
+          });
+
+          while (temp.indexOf("") > -1) // 불필요한 "" 지우기
+            temp.splice(temp.indexOf(""), 1);
+          
+          pages[i] = temp;
+        }
+
+
+        // 충전기
+        for(i=indexes[0]+2; i<indexes[1]; i++) { //..번기, 소계
+          temp="";
+          var numOfVal=4;
+          if(pages[i][0].includes("소"))
+            numOfVal++;
+          for(j=0; j<pages[i].length-numOfVal; j++) { // 뒤 4개 또는 5개 값을 제외한 나머지 병합
+            temp+=pages[i][j];
+            pages[i].splice(j,1);
+            j--;
+          }
+          pages[i].splice(0,0,temp);
+
+          while(pages[i].length<6) // 행 6개로 맟추기
+            pages[i].splice(1,0,"");
+
+          if(pages[i].includes("총계")){ // 총계는 2번째 3번째 행 뒤바꾸기
+            pages[i][1]=pages[i][2];
+            pages[i][2]="";
+          }
+        }
+        
+
+        // 판매유형
+        for(i=indexes[1]+2; i<indexes[2]; i++) { //현금거래, 신용카드 사용거래
+          temp = pages[i][0]+" ";
+          for(j=1; j<pages[i].length;j++)
+          {
+            if(isNaN(pages[i][j]))
+            {
+              temp += pages[i][j]+" ";
+              pages[i].splice(j, 1);
+              j--;
+            }
+          }
+
+          pages[i][0] = temp;
+          while(pages[i].length<6) // 행 6개로 맟추기
+            pages[i].splice(1,0,"");
+        }
+
+
+        //신용카드/전자상품권
+        for(i=indexes[2]+2; i<indexes[3]; i++) { // 구분 문자열 합치기
+          temp = pages[i][0];
+          for(j=1; j<pages[i].length;j++)
+          {
+            if(isNaN(pages[i][j]))
+            {
+              temp += pages[i][j];
+              pages[i].splice(j, 1);
+              j--;
+            }
+          }
+
+          pages[i][0] = temp;
+          while(pages[i].length<6) // 행 6개로 맟추기
+            pages[i].splice(1,0,"");
+        }
+
+
+        // 충전원 번호
+        for(i=indexes[3]+2; i<indexes[4]; i++) { // 충전원 번호/이름 문자열 합치기
+          temp = "";
+          for(j=0; j<pages[i].length-3; j++) { // 뒤 3개 값을 제외한 나머지 병합
+            temp+=pages[i][j];
+            pages[i].splice(j,1);
+            j--;
+          }
+          pages[i].splice(0,0,temp);
+
+          while(pages[i].length<6) // 행 6개로 맟추기
+            pages[i].splice(1,0,"");
+        }
+
+
+        // 토탈게이지(적수) 증가량
+        for(i=indexes[4]+3; i<indexes[5]; i++) { // ..번기
+          temp="";
+          var numOfVal=3;
+          var insert=1;
+          if(pages[i][0].includes("증")) {
+            numOfVal=1;
+            insert=0;
+          }
+          for(j=0; j<pages[i].length-numOfVal; j++) { // 뒤 3개 또는 1개 값을 제외한 나머지 병합
+            temp+=pages[i][j];
+            pages[i].splice(j,1);
+            j--;
+          }
+          pages[i].splice(0,0,temp);
+
+          while(pages[i].length<6) // 행 6개로 맟추기
+            pages[i].splice(insert,0,"");
+        }
+
+        // 충전기, 판매유형, 충전원 번호, 토탈게이지(적수) 중가량 구분 다시 구성
+        pages[indexes[0]+1] = ["충전기","Kg","원","L","원","건"];
+        pages[indexes[1]+1] = ["판매 유형","","","L","원","건"];
+        pages[indexes[2]+1] = ["신용카드/전자상품권","","","원","원","건"];
+        pages[indexes[3]+1] = ["충전원 번호","","","L","원","건"];
+        pages[indexes[4]+1] = ["토탈게이지(적수) 증가량","","","전마감 적수(L)","현마감 적수(L)","증감량"];
+        pages.splice([indexes[4]+2],1);
+
+        // 구분을 위해 공백 하나 더 삽입
+        pages.splice(indexes[0],0,[]);
+        pages.splice(indexes[1]+1,0,[]);
+        pages.splice(indexes[2]+2,0,[]);
+        pages.splice(indexes[3]+3,0,[]);
+        pages.splice(indexes[4]+4,0,[]);
+      }
+
+      function export_file(pages, name) { // csv파일으로 데이터 저장
+        // let csvContent = "\uFEFF"
+        // + pages.map(e => e.join(",")).join("\n");
+        // //console.log(csvContent);
+        
+        // 파일 다운로드
+        // var hiddenElement = document.createElement('a');
+        // hiddenElement.href = 'data:text/csv;charset=ANSI,' + encodeURI(csvContent);
+        // hiddenElement.target = '_blank';
+        // hiddenElement.download = name+'.csv';
+        // hiddenElement.click();
+        
+        var wb = XLSX.utils.book_new();
+        wb.SheetNames.push("sheet 1");
+        var ws = XLSX.utils.aoa_to_sheet(pages);
+        wb.Sheets["sheet 1"] = ws;
+        var wbout = XLSX.write(wb, {bookType:'xls',  type: 'binary'});
+        var blob = new Blob([s2ab(wbout)],{type:"application/octet-stream"});
+
+        //파일 다운로드
+        var hiddenElement = document.createElement('a');
+        hiddenElement.href = URL.createObjectURL(blob);
+        hiddenElement.target = '_blank';
+        hiddenElement.download = name+'.xls';
+        hiddenElement.click();
+      }
+
+      // 엑셀 ArrayBuffer 만들어주는 함수
+      function s2ab(s) {
+          var buf = new ArrayBuffer(s.length); //convert s to arrayBuffer
+          var view = new Uint8Array(buf);  //create uint8array as viewer
+          for (var i=0; i<s.length; i++) view[i] = s.charCodeAt(i) & 0xFF; //convert to octet
+          return buf;
+      }
+
+      //추출한 데이터 띄우기
+      function display() {
+        if(select) // 새로고침
+          select.remove();
+
+        // 데이터 선택
+        select = document.createElement("TABLE");
+        select.setAttribute("id", "select");
+        document.body.appendChild(select);
+
+        for (i=0; i<data.length; i++) {
+          var t = document.createElement("TD");
+          var element = document.createElement('a');
+          element.setAttribute("id", i);
+          element.text = i;
+            element.onclick = function(self){
+              console.log(self); 
+              drawTable(data[self.srcElement.id], 6);
+            };
+
+
+          t.appendChild(element);
+          select.appendChild(t);
+        }
+        
+      }
+
+      function drawTable(data, column) {
+        if(table) // 새로고침
+          table.remove();
+        
+        table = document.createElement("TABLE");
+        table.setAttribute("id", "table");
+        table.setAttribute("border", "1");
+        table.setAttribute('style',"border-collapse:collapse");
+        document.body.appendChild(table);
+
+        for (i = 0; i < data.length; i++) {
+          var r = document.createElement("TR");
+          r.setAttribute("id", "row"+i);
+          table.appendChild(r);
+          
+          for(j = 0; j < column; j++) {
+            var t = document.createElement("TD");
+            t.setAttribute("style", "font-size:11px");
+            
+            var text = "";
+            if(j < data[i].length)
+              text = data[i][j];
+            
+            t.appendChild(document.createTextNode(text));
+            r.appendChild(t);
+          }
+        }
+      }
+
+  </script>
+
+</body>
+
+</html>
