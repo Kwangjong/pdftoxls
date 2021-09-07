@@ -3,9 +3,9 @@
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 
   <!-- pdf 여는 라이브러리 -->
-  <script src="https://mozilla.github.io/pdf.js/build/pdf.js"></script>
+  <script src="src/pdf.js"></script>
   <!-- 엑셀로 저장하는 라이브러리 -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.14.3/xlsx.full.min.js"></script>
+  <script src="src/xlsx.full.min.js"></script>
 
   <head>
     <h2> pdf->excel 변환 </h2>
@@ -35,7 +35,7 @@
         data = []; // 전역 변수 초기화
 
         pdfjsLib.GlobalWorkerOptions.workerSrc = 
-        "https://mozilla.github.io/pdf.js/build/pdf.worker.js";
+        "src/pdf.worker.js";
 
         if(!files.length) { 
           alert("파일을 선택하세요");
